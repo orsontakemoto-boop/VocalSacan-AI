@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef } from 'react';
 
 interface SpectrogramProps {
@@ -32,38 +33,47 @@ const Spectrogram: React.FC<SpectrogramProps> = ({ dataArray, isActive }) => {
     const width = canvas.width;
     const height = canvas.height;
     
+    // Efeito de rolagem: desenha a imagem anterior deslocada para a esquerda
     tempCtx.drawImage(canvas, 0, 0);
 
+    // Limpa fundo
     ctx.fillStyle = '#050505';
     ctx.fillRect(0, 0, width, height);
     
+    // Desenha imagem deslocada (-2px)
     ctx.drawImage(tempCanvas, -2, 0);
 
     const sliceWidth = 2;
     const x = width - sliceWidth;
     const binCount = dataArray.length;
     
+    // Desenha a nova coluna de frequência
     for (let i = 0; i < height; i++) {
+        // Mapeia altura do canvas para índices de frequência (logarítmico ou linear ajustado)
         const freqIndex = Math.floor(((height - i) / height) * (binCount / 1.5));
         
         if (freqIndex < binCount) {
-            const value = dataArray[freqIndex];
+            const value = dataArray[freqIndex]; // Amplitude (0-255)
             
+            // Renderiza apenas se houver sinal significativo
             if (value > 10) {
                 let r=0, g=0, b=0;
                 
-                if (value < 128) {
-                    r = value; 
-                    g = 0;
-                    b = 100 + value;
-                } else if (value < 200) {
-                    r = 128 - (value - 128);
-                    g = (value - 128) * 3;
-                    b = 255;
+                // Mapa de Cores Termográfico (Heatmap)
+                // Azul Escuro (Baixo) -> Verde (Médio) -> Amarelo/Vermelho (Alto)
+                
+                if (value < 60) {
+                   // Azul escuro para ruído de fundo
+                   r = 0; g = 0; b = value * 2; 
+                } else if (value < 120) {
+                   // Ciano/Verde para frequências médias
+                   r = 0; g = (value - 60) * 4; b = 255 - (value - 60) * 2;
+                } else if (value < 180) {
+                   // Amarelo para intensidade alta
+                   r = (value - 120) * 4; g = 255; b = 0;
                 } else {
-                    r = (value - 200) * 5;
-                    g = 255;
-                    b = 255;
+                   // Vermelho/Branco para picos máximos
+                   r = 255; g = 255 - (value - 180) * 4; b = (value - 180) * 4;
                 }
 
                 ctx.fillStyle = `rgb(${r},${g},${b})`;
@@ -82,11 +92,24 @@ const Spectrogram: React.FC<SpectrogramProps> = ({ dataArray, isActive }) => {
             height={400} 
             className="w-full h-full object-cover"
         />
-        <div className="absolute bottom-2 right-2 text-xs text-gray-500 font-mono">
-            Tempo &rarr;
-        </div>
-        <div className="absolute top-2 left-2 text-xs text-gray-500 font-mono">
-            Freq &uarr;
+        {/* Eixos e Legendas */}
+        <div className="absolute bottom-1 right-2 text-[10px] text-gray-500 font-mono">Tempo (s) &rarr;</div>
+        <div className="absolute top-2 left-1 text-[10px] text-gray-500 font-mono">Freq (Hz) &uarr;</div>
+        
+        {/* Legenda de Cores */}
+        <div className="absolute top-2 right-2 flex flex-col gap-1 bg-black/60 p-1 rounded border border-gray-800">
+            <div className="flex items-center gap-1">
+                <div className="w-2 h-2 bg-red-500 rounded-full"></div>
+                <span className="text-[9px] text-gray-300">Alto dB</span>
+            </div>
+             <div className="flex items-center gap-1">
+                <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
+                <span className="text-[9px] text-gray-300">Médio dB</span>
+            </div>
+            <div className="flex items-center gap-1">
+                <div className="w-2 h-2 bg-blue-600 rounded-full"></div>
+                <span className="text-[9px] text-gray-300">Baixo dB</span>
+            </div>
         </div>
     </div>
   );

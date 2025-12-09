@@ -1,28 +1,48 @@
+
 import { GoogleGenAI } from "@google/genai";
 
 const SYSTEM_PROMPT = `
-Você é um especialista em fonoaudiologia e engenharia de áudio. 
-Sua tarefa é analisar o arquivo de áudio fornecido contendo fala humana.
-Forneça uma análise concisa, estruturada e profissional cobrindo os seguintes pontos:
+Você é um especialista sênior em fonoaudiologia, acústica e análise espectral.
+Sua tarefa é analisar o áudio fornecido e os **DADOS TÉCNICOS MEDIDOS** para gerar um laudo detalhado.
 
-1.  **Características Vocais**: Descreva o timbre (ex: rouco, aveludado, estridente, anasalado, soproso).
-2.  **Tonalidade e Pitch**: Classifique a voz (Grave, Médio, Agudo) e estime a estabilidade.
-3.  **Dinâmica e Intensidade**: A voz varia bem o volume ou é monótona?
-4.  **Emoção/Intenção**: Qual a emoção transmitida (calma, ansiosa, autoritária, hesitante)?
-5.  **Recomendação Rápida**: Uma dica breve para melhoria da comunicação se aplicável.
+ESTRUTURA DO RELATÓRIO:
 
-Formate a resposta usando Markdown. Use emojis para ilustrar os pontos principais. Seja objetivo.
+1.  **📊 Análise Quantitativa (Tabela)**:
+    *   Crie uma pequena tabela ou lista Markdown com os valores medidos de Pitch (Frequência Fundamental), F1 e F2.
+    *   Compare esses valores com a média esperada para vozes adultas (masculinas ou femininas, deduza pelo pitch).
+    *   Explique brevemente o que F1 (abertura da boca) e F2 (posição da língua) indicam neste caso específico.
+
+2.  **🗣️ Qualidade Vocal (Subjetiva)**:
+    *   Descreva o timbre, estabilidade e ressonância.
+    *   A voz apresenta soprosidade, rouquidão, tensão ou tremor?
+
+3.  **🎯 Conclusão e Dicas**:
+    *   Forneça 2 exercícios práticos baseados na análise (ex: se F1 está baixo, sugerir abrir mais a boca).
+
+Seja profissional, científico, mas acessível. Use Markdown para formatação rica.
 `;
 
-export const analyzeAudioWithGemini = async (audioBlob: Blob): Promise<string> => {
+interface AnalysisMetrics {
+  avgPitch: number;
+  avgF1: number;
+  avgF2: number;
+}
+
+export const analyzeAudioWithGemini = async (audioBlob: Blob, metrics: AnalysisMetrics): Promise<string> => {
   try {
     const apiKey = process.env.API_KEY;
     if (!apiKey) throw new Error("API Key not found");
 
     const ai = new GoogleGenAI({ apiKey });
     
-    // Convert Blob to Base64
     const base64Data = await blobToBase64(audioBlob);
+
+    const metricsText = `
+    DADOS MEDIDOS PELO ALGORITMO (Use estes números na sua análise):
+    - Frequência Fundamental Média (Pitch/F0): ${Math.round(metrics.avgPitch)} Hz
+    - Formante 1 Médio (F1): ${Math.round(metrics.avgF1)} Hz
+    - Formante 2 Médio (F2): ${Math.round(metrics.avgF2)} Hz
+    `;
 
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
@@ -35,13 +55,13 @@ export const analyzeAudioWithGemini = async (audioBlob: Blob): Promise<string> =
             }
           },
           {
-            text: "Analise este áudio focando nas características da voz."
+            text: `Analise este áudio de teste de vogal sustentada. ${metricsText}`
           }
         ]
       },
       config: {
         systemInstruction: SYSTEM_PROMPT,
-        temperature: 0.4, // Lower temperature for more analytical results
+        temperature: 0.3,
       }
     });
 
@@ -58,7 +78,6 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
     const reader = new FileReader();
     reader.onloadend = () => {
       const result = reader.result as string;
-      // Remove data URL prefix (e.g., "data:audio/webm;base64,")
       const base64 = result.split(',')[1];
       resolve(base64);
     };

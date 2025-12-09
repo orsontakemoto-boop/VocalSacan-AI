@@ -1,33 +1,49 @@
+
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { AudioAnalyzer } from './services/audioAnalyzer';
 import { analyzeAudioWithGemini } from './services/geminiService';
+import { speakSequence } from './services/ttsService';
 import Spectrogram from './components/Spectrogram';
 import { MetricsDisplay } from './components/MetricsDisplay';
 import { AnalysisStatus, AudioMetrics } from './types';
-import { Mic, Square, Activity, Cpu } from 'lucide-react';
+import { Mic, Square, Activity, Cpu, Volume2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 const analyzer = new AudioAnalyzer();
 
 export default function App() {
   const [status, setStatus] = useState<AnalysisStatus>(AnalysisStatus.IDLE);
-  const [metrics, setMetrics] = useState<AudioMetrics>({ pitch: 0, volume: -100, clarity: 0 });
+  const [metrics, setMetrics] = useState<AudioMetrics>({ pitch: 0, volume: -100, clarity: 0, f1: 0, f2: 0 });
   const [frequencyData, setFrequencyData] = useState<Uint8Array>(new Uint8Array(0));
   const [geminiAnalysis, setGeminiAnalysis] = useState<string | null>(null);
+  const [instructionText, setInstructionText] = useState<string>("");
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const animationRef = useRef<number | null>(null);
 
+  // Armazenamento de dados para cálculo de média
+  const collectedMetricsRef = useRef<{pitches: number[], f1s: number[], f2s: number[]}>({
+    pitches: [],
+    f1s: [],
+    f2s: []
+  });
+
   const updateMetrics = useCallback(() => {
     if (status === AnalysisStatus.RECORDING) {
       const pitch = analyzer.getPitch();
       const volume = analyzer.getVolume();
+      const { f1, f2 } = analyzer.getFormants();
       const freqData = analyzer.getFrequencyData();
       
-      // Update state for UI
-      setMetrics({ pitch, volume, clarity: 0 });
-      // Create a copy to trigger React render for Spectrogram
+      // Armazena valores válidos para média
+      if (pitch > 50 && volume > -40) { // Ignora silêncio/ruído
+         collectedMetricsRef.current.pitches.push(pitch);
+         if (f1 > 0) collectedMetricsRef.current.f1s.push(f1);
+         if (f2 > 0) collectedMetricsRef.current.f2s.push(f2);
+      }
+
+      setMetrics({ pitch, volume, clarity: 0, f1, f2 });
       setFrequencyData(new Uint8Array(freqData));
       
       animationRef.current = requestAnimationFrame(updateMetrics);
@@ -47,12 +63,38 @@ export default function App() {
     };
   }, [status, updateMetrics]);
 
-  const startRecording = async () => {
+  const handleStartProcess = async () => {
     try {
       setGeminiAnalysis(null);
+      await analyzer.start(); 
+      analyzer.stop(); 
+
+      setStatus(AnalysisStatus.GUIDING);
+      
+      // Reseta métricas coletadas
+      collectedMetricsRef.current = { pitches: [], f1s: [], f2s: [] };
+
+      await speakSequence([
+        { text: "Olá. Para a análise, respire fundo.", rate: 1.05, pitch: 1.1 },
+        { text: "Diga seu nome completo.", rate: 1.05, pitch: 1.1 },
+        { text: "Sustente a vogal: 'Áh', por 5 segundos.", rate: 1.0, pitch: 1.1 }
+      ], (text) => {
+        setInstructionText(text);
+      });
+
+      setInstructionText(""); 
+      startRecording();
+    } catch (err) {
+      console.error("Erro ao iniciar:", err);
+      alert("Erro ao iniciar. Verifique as permissões de microfone.");
+      setStatus(AnalysisStatus.IDLE);
+    }
+  };
+
+  const startRecording = async () => {
+    try {
       const stream = await analyzer.start();
       
-      // Setup MediaRecorder for Gemini Analysis
       const recorder = new MediaRecorder(stream);
       mediaRecorderRef.current = recorder;
       chunksRef.current = [];
@@ -77,7 +119,6 @@ export default function App() {
       analyzer.stop();
       setStatus(AnalysisStatus.PROCESSING);
 
-      // Wait for recorder to finalize
       mediaRecorderRef.current.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         await performGeminiAnalysis(blob);
@@ -85,9 +126,24 @@ export default function App() {
     }
   };
 
+  const calculateAverage = (arr: number[]) => {
+      if (arr.length === 0) return 0;
+      return arr.reduce((a, b) => a + b, 0) / arr.length;
+  };
+
   const performGeminiAnalysis = async (audioBlob: Blob) => {
     try {
-      const result = await analyzeAudioWithGemini(audioBlob);
+      // Calcula médias dos dados coletados
+      const avgPitch = calculateAverage(collectedMetricsRef.current.pitches);
+      const avgF1 = calculateAverage(collectedMetricsRef.current.f1s);
+      const avgF2 = calculateAverage(collectedMetricsRef.current.f2s);
+
+      const result = await analyzeAudioWithGemini(audioBlob, {
+          avgPitch,
+          avgF1,
+          avgF2
+      });
+      
       setGeminiAnalysis(result);
       setStatus(AnalysisStatus.COMPLETED);
     } catch (e) {
@@ -100,7 +156,6 @@ export default function App() {
     <div className="min-h-screen bg-sci-fi-bg text-gray-200 p-4 md:p-8 font-sans selection:bg-sci-fi-accent selection:text-black">
       <div className="max-w-5xl mx-auto space-y-8">
         
-        {/* Header */}
         <header className="flex items-center justify-between border-b border-gray-800 pb-6">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-sci-fi-panel border border-sci-fi-accent rounded-lg shadow-[0_0_10px_rgba(0,240,255,0.2)]">
@@ -122,10 +177,8 @@ export default function App() {
           </div>
         </header>
 
-        {/* Main Display Area */}
         <main className="space-y-6">
           
-          {/* Visualizer Section */}
           <section className="relative">
              <Spectrogram dataArray={frequencyData} isActive={status === AnalysisStatus.RECORDING} />
              
@@ -136,12 +189,24 @@ export default function App() {
                  </p>
                </div>
              )}
+
+             {status === AnalysisStatus.GUIDING && (
+               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm z-10 animate-in fade-in">
+                 <div className="p-4 rounded-full bg-sci-fi-secondary/20 border border-sci-fi-secondary mb-4 animate-pulse">
+                   <Volume2 className="w-10 h-10 text-sci-fi-secondary" />
+                 </div>
+                 <p className="text-sci-fi-secondary font-mono text-lg font-bold tracking-widest mb-4">
+                   INSTRUINDO...
+                 </p>
+                 <p className="text-white text-xl md:text-2xl font-medium text-center px-4 max-w-2xl leading-relaxed animate-in slide-in-from-bottom-2">
+                   "{instructionText}"
+                 </p>
+               </div>
+             )}
           </section>
 
-          {/* Real-time Metrics */}
           <MetricsDisplay metrics={metrics} />
 
-          {/* Controls */}
           <div className="flex justify-center gap-6 py-4">
             {status === AnalysisStatus.RECORDING ? (
               <button 
@@ -154,30 +219,36 @@ export default function App() {
               </button>
             ) : (
               <button 
-                onClick={startRecording}
-                disabled={status === AnalysisStatus.PROCESSING}
+                onClick={handleStartProcess}
+                disabled={status === AnalysisStatus.PROCESSING || status === AnalysisStatus.GUIDING}
                 className={`px-8 py-4 rounded-full border flex items-center gap-3 font-bold tracking-wider transition-all duration-300 shadow-[0_0_20px_rgba(0,240,255,0.15)]
-                  ${status === AnalysisStatus.PROCESSING 
+                  ${(status === AnalysisStatus.PROCESSING || status === AnalysisStatus.GUIDING)
                     ? 'bg-gray-800 border-gray-700 text-gray-500 cursor-not-allowed' 
                     : 'bg-sci-fi-panel border-sci-fi-accent text-sci-fi-accent hover:bg-sci-fi-accent hover:text-black hover:shadow-[0_0_30px_rgba(0,240,255,0.4)]'
                   }`}
               >
-                 {status === AnalysisStatus.PROCESSING ? (
+                 {status === AnalysisStatus.PROCESSING && (
                    <>
                     <Cpu className="w-5 h-5 animate-spin" />
                     PROCESSANDO IA...
                    </>
-                 ) : (
+                 )}
+                 {status === AnalysisStatus.GUIDING && (
+                   <>
+                    <Volume2 className="w-5 h-5 animate-pulse" />
+                    OUÇA AS INSTRUÇÕES...
+                   </>
+                 )}
+                 {(status === AnalysisStatus.IDLE || status === AnalysisStatus.COMPLETED || status === AnalysisStatus.ERROR) && (
                    <>
                     <Mic className="w-5 h-5" />
-                    INICIAR CAPTURA
+                    INICIAR EXAME
                    </>
                  )}
               </button>
             )}
           </div>
 
-          {/* Gemini Analysis Result */}
           {geminiAnalysis && (
             <div className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-700">
               <div className="bg-[#0a0a0a] border border-gray-800 rounded-xl p-6 md:p-8 relative overflow-hidden">

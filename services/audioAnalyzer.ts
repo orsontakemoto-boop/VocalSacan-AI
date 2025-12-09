@@ -1,3 +1,4 @@
+
 export class AudioAnalyzer {
   private audioContext: AudioContext | null = null;
   private analyser: AnalyserNode | null = null;
@@ -14,6 +15,7 @@ export class AudioAnalyzer {
     this.analyser = this.audioContext.createAnalyser();
     
     this.analyser.fftSize = 2048; 
+    this.analyser.smoothingTimeConstant = 0.8; // Suavização para facilitar detecção visual
     this.bufferLength = this.analyser.frequencyBinCount;
     this.dataArray = new Uint8Array(this.bufferLength);
     
@@ -37,7 +39,6 @@ export class AudioAnalyzer {
 
   getFrequencyData(): Uint8Array {
     if (!this.analyser || !this.dataArray) return new Uint8Array(0);
-    // Usando 'as any' para evitar erro TS2345 estrito sobre ArrayBufferLike no build
     this.analyser.getByteFrequencyData(this.dataArray as any);
     return this.dataArray;
   }
@@ -45,7 +46,6 @@ export class AudioAnalyzer {
   getTimeDomainData(): Uint8Array {
     if (!this.analyser) return new Uint8Array(0);
     const timeData = new Uint8Array(this.analyser.fftSize);
-    // Usando 'as any' para evitar erro TS2345 estrito sobre ArrayBufferLike no build
     this.analyser.getByteTimeDomainData(timeData as any);
     return timeData;
   }
@@ -117,5 +117,45 @@ export class AudioAnalyzer {
     }
     
     return 0;
+  }
+
+  // Estimativa simplificada de Formantes (Picos no envelope espectral)
+  getFormants(): { f1: number, f2: number } {
+    if (!this.analyser || !this.dataArray) return { f1: 0, f2: 0 };
+    
+    const spectrum = this.getFrequencyData();
+    const sampleRate = this.audioContext?.sampleRate || 44100;
+    const binSize = sampleRate / this.analyser.fftSize;
+
+    // Suavização simples (Moving Average) para encontrar o "envelope" e ignorar harmônicos individuais
+    const envelope = new Float32Array(spectrum.length);
+    const windowSize = 5; // Janela de suavização
+
+    for (let i = 0; i < spectrum.length; i++) {
+        let sum = 0;
+        let count = 0;
+        for (let w = -windowSize; w <= windowSize; w++) {
+            if (i + w >= 0 && i + w < spectrum.length) {
+                sum += spectrum[i + w];
+                count++;
+            }
+        }
+        envelope[i] = sum / count;
+    }
+
+    // Encontrar picos no envelope
+    const peaks: number[] = [];
+    // Começamos de um índice > 5 para ignorar o componente DC e ruídos muito graves
+    for (let i = 5; i < envelope.length - 1; i++) {
+        if (envelope[i] > envelope[i - 1] && envelope[i] > envelope[i + 1] && envelope[i] > 30) {
+            peaks.push(i * binSize * 2); // *2 é um fator de correção empírico para FFT bin size
+        }
+    }
+
+    // Heurística básica para F1 (200-1000Hz) e F2 (800-2500Hz)
+    let f1 = peaks.find(f => f > 250 && f < 900) || 0;
+    let f2 = peaks.find(f => f > 950 && f < 2500) || 0;
+
+    return { f1, f2 };
   }
 }
