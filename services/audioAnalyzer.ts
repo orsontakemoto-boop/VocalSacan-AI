@@ -37,14 +37,16 @@ export class AudioAnalyzer {
 
   getFrequencyData(): Uint8Array {
     if (!this.analyser || !this.dataArray) return new Uint8Array(0);
-    this.analyser.getByteFrequencyData(this.dataArray as unknown as Uint8Array);
+    // Usando 'as any' para evitar erro TS2345 estrito sobre ArrayBufferLike no build
+    this.analyser.getByteFrequencyData(this.dataArray as any);
     return this.dataArray;
   }
 
   getTimeDomainData(): Uint8Array {
     if (!this.analyser) return new Uint8Array(0);
     const timeData = new Uint8Array(this.analyser.fftSize);
-    this.analyser.getByteTimeDomainData(timeData as unknown as Uint8Array);
+    // Usando 'as any' para evitar erro TS2345 estrito sobre ArrayBufferLike no build
+    this.analyser.getByteTimeDomainData(timeData as any);
     return timeData;
   }
 
